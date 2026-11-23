@@ -3752,7 +3752,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "투명도"
+            "value" : "불투명도"
           }
         }
       }

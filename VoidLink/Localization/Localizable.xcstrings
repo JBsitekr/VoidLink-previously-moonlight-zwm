@@ -1461,7 +1461,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "바탕화면"
+            "value" : "바탕 화면"
           }
         },
         "zh-Hans" : {
@@ -4850,7 +4850,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "바탕화면으로 전환"
+            "value" : "바탕 화면으로 전환"
           }
         },
         "zh-Hans" : {
@@ -6575,7 +6575,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "투명도"
+            "value" : "불투명도"
           }
         },
         "zh-Hans" : {
@@ -6993,7 +6993,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "연타 꺼짐"
+            "value" : "자동 연타 꺼짐"
           }
         },
         "zh-Hans" : {
@@ -7507,7 +7507,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "테두리 투명도"
+            "value" : "테두리 불투명도"
           }
         },
         "zh-Hans" : {
@@ -15418,7 +15418,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "강조 투명도"
+            "value" : "강조 불투명도"
           }
         },
         "zh-Hans" : {
@@ -16510,7 +16510,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "이름 투명도"
+            "value" : "이름 불투명도"
           }
         },
         "zh-Hans" : {
@@ -29447,7 +29447,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "위쪽 화살표"
+            "value" : "위 화살표"
           }
         },
         "zh-Hans" : {
