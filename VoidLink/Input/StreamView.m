@@ -66,6 +66,7 @@ static NSString * const KeyboardInputSentinel = @"\u200B";
     NSMutableSet* keysDown;
     dispatch_queue_t keyboardTextQueue;
     NSString* sentKeyboardText;
+    BOOL flushingMarkedHangul;
 
     // iOS 13.4 mouse support
     NSInteger lastMouseButtonMask;
@@ -1957,6 +1958,11 @@ static CGFloat previousRollAngle = 0;
             });
         }
     }
+#else
+    if (textField == keyInputField) {
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushMarkedHangul) object:nil];
+        [self flushMarkedHangul];
+    }
 #endif
     for (NSNumber* keyCode in keysDown) {
         LiSendKeyboardEvent([keyCode shortValue], KEY_ACTION_UP, 0);
@@ -2012,16 +2018,38 @@ static NSArray<NSString*>* composedCharacters(NSString* string) {
     [textField setSelectedTextRange:textRange];
 }
 
+#if !TARGET_OS_TV
+- (void)flushMarkedHangul {
+    if (keyInputField == nil) {
+        return;
+    }
+    flushingMarkedHangul = YES;
+    [self onKeyboardPressed:keyInputField];
+    flushingMarkedHangul = NO;
+}
+
+- (BOOL)toolbarHasLockedKeys {
+    if (@available(iOS 13.0, *)) {
+        UIView* accessoryView = keyInputField.inputAccessoryView;
+        return [accessoryView isKindOfClass:[InputAccessoryBar class]] && ((InputAccessoryBar*)accessoryView).hasLockedKeys;
+    }
+    return NO;
+}
+#endif
+
 // Must be called on keyboardTextQueue
-- (void)sendKeyboardText:(NSString*)text {
+// lettersAsText: send ASCII letters as UTF-8 too, so a host IME in Hangul mode doesn't turn them into Hangul.
+// Pass NO while a toolbar modifier (Ctrl etc.) is held, since shortcuts need real key events.
+- (void)sendKeyboardText:(NSString*)text lettersAsText:(BOOL)lettersAsText {
     if (text.length == 0) {
         return;
     }
 
     // Check if any characters exist which can't be represented in a basic key event
     for (NSUInteger i = 0; i < text.length; i++) {
-        struct KeyEvent event = [KeyboardSupport translateKeyEvent:[text characterAtIndex:i] withModifierFlags:0];
-        if (event.keycode == 0) {
+        unichar c = [text characterAtIndex:i];
+        struct KeyEvent event = [KeyboardSupport translateKeyEvent:c withModifierFlags:0];
+        if (event.keycode == 0 || (lettersAsText && c < 128 && isalpha(c))) {
             // We found an unknown key, so send the entire string as UTF-8
             const char* utf8String = text.UTF8String;
             LiSendUtf8TextEvent(utf8String, (int)strlen(utf8String));
@@ -2048,10 +2076,19 @@ static NSArray<NSString*>* composedCharacters(NSString* string) {
     // While an IME is composing, the marked text isn't final yet. For most IMEs
     // (Japanese, Chinese) it can contain Latin letters that must not reach the host,
     // so only consider the committed text before it and send the rest once it's
-    // committed. Hangul being composed is real text that only gets replaced, so
-    // send it right away and let the diff below fix it up as it changes.
+    // committed. Hangul being composed is real text that only gets replaced, so it is
+    // sent once typing pauses (or when committed) and the diff below fixes it up.
     UITextRange* markedTextRange = textField.markedTextRange;
-    if (markedTextRange != nil && !isHangul([textField textInRange:markedTextRange])) {
+    BOOL markedIsHangul = markedTextRange != nil && isHangul([textField textInRange:markedTextRange]);
+    // Hold back the Hangul syllable being composed until typing pauses, so fast typing
+    // goes out as finished syllables instead of Backspace + rewrite on every key.
+    if (!flushingMarkedHangul) {
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushMarkedHangul) object:nil];
+        if (markedIsHangul) {
+            [self performSelector:@selector(flushMarkedHangul) withObject:nil afterDelay:0.4];
+        }
+    }
+    if (markedTextRange != nil && !(markedIsHangul && flushingMarkedHangul)) {
         NSInteger committedLength = [textField offsetFromPosition:textField.beginningOfDocument toPosition:markedTextRange.start];
         if (committedLength <= 0 || committedLength > (NSInteger)inputText.length) {
             return;
@@ -2096,6 +2133,7 @@ static NSArray<NSString*>* composedCharacters(NSString* string) {
     NSString* addedText = [[currentCharacters subarrayWithRange:NSMakeRange(commonLength, currentCharacters.count - commonLength)] componentsJoinedByString:@""];
     sentKeyboardText = currentText;
 
+    BOOL lettersAsText = ![self toolbarHasLockedKeys];
     if (backspaces > 0 || addedText.length > 0) {
         dispatch_async(keyboardTextQueue, ^{
             for (NSUInteger i = 0; i < backspaces; i++) {
@@ -2103,7 +2141,7 @@ static NSArray<NSString*>* composedCharacters(NSString* string) {
                 usleep(50 * 1000);
                 LiSendKeyboardEvent(0x08, KEY_ACTION_UP, 0);
             }
-            [self sendKeyboardText:addedText];
+            [self sendKeyboardText:addedText lettersAsText:lettersAsText];
         });
     }
 

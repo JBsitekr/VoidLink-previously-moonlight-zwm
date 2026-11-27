@@ -789,6 +789,11 @@ final class InputAccessoryBar: UIView, UIScrollViewDelegate, WidgetPickerViewCon
         updateScrollMask()
     }
 
+    /// True while a tap-to-toggle key (Ctrl, Shift…) is locked down. Text typed then must go out as key events.
+    @objc var hasLockedKeys: Bool {
+        itemViews.contains { $0.button.isTapToToggleMode && $0.button.isLogicallyPressed }
+    }
+
     @objc func releasePressedKeys() {
         for item in itemViews {
             if item.button.isTapToToggleMode, item.button.isLogicallyPressed {
