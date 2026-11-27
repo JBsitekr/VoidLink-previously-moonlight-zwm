@@ -293,6 +293,7 @@ private let settingsLegacyHelpByStackIdentifier: [String: SettingsLegacyHelpCont
     "unlockDisplayOrientationStack": .init(messageKey: "unlockDisplayOrientationStackTip", learnMoreURLKey: nil),
     "optimizeGamesStack": .init(messageKey: "optimizeGamesStackTip", learnMoreURLKey: nil),
     "softKeyboardHeightStack": .init(messageKey: "softKeyboardHeightStackTip", learnMoreURLKey: nil),
+    "hangulViaHostIMEStack": .init(messageKey: "hangulViaHostIMEStackTip", learnMoreURLKey: nil),
 
     // Experimental
     "renderingBackendStack": .init(messageKey: "renderingBackendStackTip", learnMoreURLKey: nil),
@@ -427,6 +428,7 @@ enum SettingsItemID: String, Hashable, Identifiable {
     // MARK: Others - manual additions
 
     case softKeyboardToolbar = "softKeyboardToolbarStack"
+    case hangulViaHostIME = "hangulViaHostIMEStack"
     case softKeyboardHeight = "softKeyboardHeightStack"
     case rememberFoldState = "rememberFoldStateStack"
 
@@ -537,6 +539,7 @@ enum SettingsItemID: String, Hashable, Identifiable {
         case .optimizeGames: return "Optimize Game Settings"
         case .multiController: return "Multi-Controller Mode"
         case .softKeyboardToolbar: return "Soft Keyboard Toolbar"
+        case .hangulViaHostIME: return "Type Hangul with Host IME"
         case .softKeyboardHeight: return "Designate Soft Keyboard Height"
         case .rememberFoldState: return "Remember Menu Fold/Expand"
         case .touchModeExperimental: return "Touch Mode"
@@ -1335,6 +1338,7 @@ final class SettingsItemRegistry: ObservableObject {
     let optimizeGames = SettingsItemModel<Bool>(id: .optimizeGames, value:true)
     let multiController = SettingsItemModel<Bool>(id: .multiController, value: true)
     let softKeyboardToolbar = SettingsItemModel<Bool>(id: .softKeyboardToolbar, value: true)
+    let hangulViaHostIME = SettingsItemModel<Bool>(id: .hangulViaHostIME, value: UserDefaults.standard.bool(forKey: "hangulViaHostIME"))
     let softKeyboardHeight = SettingsItemModel<Double>(id: .softKeyboardHeight, value: 0)
     let rememberFoldState = SettingsItemModel<Bool>(id: .rememberFoldState, value: true)
 
@@ -1463,6 +1467,7 @@ final class SettingsItemRegistry: ObservableObject {
             optimizeGames.objectWillChange,
             multiController.objectWillChange,
             softKeyboardToolbar.objectWillChange,
+            hangulViaHostIME.objectWillChange,
             softKeyboardHeight.objectWillChange,
             rememberFoldState.objectWillChange,
 
@@ -3667,6 +3672,11 @@ final class SettingsSession: NSObject, ObservableObject {
                 \.softKeyboardToolbar,
                 isAvailable: !PublicUtils.isTVOS
             ),
+            toggleItem(
+                \.hangulViaHostIME,
+                isAvailable: !PublicUtils.isTVOS,
+                hasInfo: true
+            ),
             doubleBackedToggleItem(
                 \.softKeyboardHeight,
                 setValue: { session, model, newValue in
@@ -5028,6 +5038,7 @@ final class SettingsSession: NSObject, ObservableObject {
         settings.buttonVisualFeedback = itemRegistry.buttonVisualFeedback.value
         settings.touchPointTracking = itemRegistry.trackTouchPoint.value
         UserDefaults.standard.set(itemRegistry.cursorInertia.value, forKey: CursorInertiaDefaultsKey)
+        UserDefaults.standard.set(itemRegistry.hangulViaHostIME.value, forKey: "hangulViaHostIME")  // read by StreamView
         UserDefaults.standard.set(itemRegistry.cursorInertiaDeceleration.value.rounded(), forKey: CursorInertiaDecelerationDefaultsKey)
         settings.floatingKeyboardButton = itemRegistry.floatingKeyboardButton.value
         UserDefaults.standard.set(itemRegistry.portraitStreamOffset.value.rounded(), forKey: PortraitStreamOffsetDefaultsKey)

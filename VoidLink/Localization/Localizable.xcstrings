@@ -1,6 +1,40 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Type Hangul with Host IME" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Type Hangul with Host IME"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "한글을 PC 입력기로 입력"
+          }
+        }
+      }
+    },
+    "hangulViaHostIMEStackTip" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sends Hangul from the soft keyboard as 2-set key presses so the host's Korean IME composes it, with no erase-and-retype flicker. Keep the host IME in Hangul mode; English letters are still sent as text."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "화면 키보드로 친 한글을 두벌식 키 입력으로 보내서 PC의 한글 입력기가 직접 조합하게 해요. 지웠다 다시 쓰는 깜빡임이 없어요. PC 입력기는 한글 모드로 두세요. 영어는 그대로 문자로 보내져요."
+          }
+        }
+      }
+    },
     "\nHost processing latency min/max/avg: %.1f/%.1f/%.1f ms" : {
       "extractionState" : "manual",
       "localizations" : {

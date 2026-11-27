@@ -67,6 +67,7 @@ static NSString * const KeyboardInputSentinel = @"\u200B";
     dispatch_queue_t keyboardTextQueue;
     NSString* sentKeyboardText;
     BOOL flushingMarkedHangul;
+    BOOL hostComposingHangul; // host IME mode: the host IME is composing the last syllable we sent
 
     // iOS 13.4 mouse support
     NSInteger lastMouseButtonMask;
@@ -1932,7 +1933,11 @@ static CGFloat previousRollAngle = 0;
     if (textField.markedTextRange != nil) {
         [textField unmarkText];
     }
-    [self onKeyboardPressed:textField];
+#if !TARGET_OS_TV
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushMarkedHangul) object:nil];
+    [self flushMarkedHangul];
+    hostComposingHangul = NO;
+#endif
 
     dispatch_async(keyboardTextQueue, ^{
         LiSendKeyboardEvent(0x0d, KEY_ACTION_DOWN, 0);
@@ -1979,6 +1984,49 @@ static CGFloat previousRollAngle = 0;
 
 #if !TARGET_OS_TV
 // Returns YES if the string is non-empty and made up only of Hangul syllables and jamo
+static const NSTimeInterval HangulFlushDelay = 0.8;
+// When on, Hangul goes out as 2-set (두벌식) key presses and the host's own Korean IME
+// composes it, so nothing has to be erased and retyped. The host IME must be in Hangul mode.
+static NSString* const HangulViaHostIMEDefaultsKey = @"hangulViaHostIME";
+
+// BEGIN hangul-keys
+static const char* const HangulInitialKeys[19] = {"r","R","s","e","E","f","a","q","Q","t","T","d","w","W","c","z","x","v","g"};
+static const char* const HangulMedialKeys[21] = {"k","o","i","O","j","p","u","P","h","hk","ho","hl","y","n","nj","np","nl","b","m","ml","l"};
+static const char* const HangulFinalKeys[28] = {"","r","R","rt","s","sw","sg","e","f","fr","fa","fq","ft","fx","fv","fg","a","q","qt","t","T","d","w","c","z","x","v","g"};
+static const char* const HangulCompatKeys[51] = {"r","R","rt","s","sw","sg","e","E","f","fr","fa","fq","ft","fx","fv","fg","a","q","Q","qt","t","T","d","w","W","c","z","x","v","g",
+    "k","o","i","O","j","p","u","P","h","hk","ho","hl","y","n","nj","np","nl","b","m","ml","l"};
+
+// Writes the 2-set keys that type c into out (NUL-terminated, at most 7 keys) and returns
+// how many there are, or -1 if c isn't a modern Hangul syllable or compatibility jamo.
+static int hangulKeysForChar(unsigned short c, char out[8]) {
+    out[0] = 0;
+    if (c >= 0xAC00 && c <= 0xD7A3) {
+        int index = c - 0xAC00;
+        strcat(out, HangulInitialKeys[index / (21 * 28)]);
+        strcat(out, HangulMedialKeys[(index / 28) % 21]);
+        strcat(out, HangulFinalKeys[index % 28]);
+    } else if (c >= 0x3131 && c <= 0x3163) {
+        strcat(out, HangulCompatKeys[c - 0x3131]);
+    } else {
+        return -1;
+    }
+    return (int)strlen(out);
+}
+// END hangul-keys
+
+// The 2-set keys for a run of Hangul characters, or nil if any of them can't be typed that way
+static NSString* hangulKeyString(NSString* string) {
+    NSMutableString* keys = [NSMutableString string];
+    for (NSUInteger i = 0; i < string.length; i++) {
+        char out[8];
+        if (hangulKeysForChar([string characterAtIndex:i], out) < 0) {
+            return nil;
+        }
+        [keys appendString:@(out)];
+    }
+    return keys;
+}
+
 static BOOL isHangul(NSString* string) {
     if (string.length == 0) {
         return NO;
@@ -2026,6 +2074,17 @@ static NSArray<NSString*>* composedCharacters(NSString* string) {
     flushingMarkedHangul = YES;
     [self onKeyboardPressed:keyInputField];
     flushingMarkedHangul = NO;
+}
+
+// Backspaces that delete sent characters from index `from` on: while the host IME is
+// composing the last one, each backspace removes a single jamo (key) of it.
+- (NSUInteger)hostBackspacesForSentCharacters:(NSArray<NSString*>*)characters from:(NSUInteger)from {
+    if (from >= characters.count) {
+        return 0;
+    }
+    NSUInteger count = characters.count - from;
+    NSString* lastKeys = hostComposingHangul ? hangulKeyString(characters.lastObject) : nil;
+    return lastKeys != nil ? count - 1 + lastKeys.length : count;
 }
 
 - (BOOL)toolbarHasLockedKeys {
@@ -2080,15 +2139,11 @@ static NSArray<NSString*>* composedCharacters(NSString* string) {
     // sent once typing pauses (or when committed) and the diff below fixes it up.
     UITextRange* markedTextRange = textField.markedTextRange;
     BOOL markedIsHangul = markedTextRange != nil && isHangul([textField textInRange:markedTextRange]);
-    // Hold back the Hangul syllable being composed until typing pauses, so fast typing
-    // goes out as finished syllables instead of Backspace + rewrite on every key.
     if (!flushingMarkedHangul) {
         [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushMarkedHangul) object:nil];
-        if (markedIsHangul) {
-            [self performSelector:@selector(flushMarkedHangul) withObject:nil afterDelay:0.4];
-        }
     }
-    if (markedTextRange != nil && !(markedIsHangul && flushingMarkedHangul)) {
+    BOOL viaHostIME = [[NSUserDefaults standardUserDefaults] boolForKey:HangulViaHostIMEDefaultsKey];
+    if (markedTextRange != nil && !(markedIsHangul && (flushingMarkedHangul || viaHostIME))) {
         NSInteger committedLength = [textField offsetFromPosition:textField.beginningOfDocument toPosition:markedTextRange.start];
         if (committedLength <= 0 || committedLength > (NSInteger)inputText.length) {
             return;
@@ -2101,7 +2156,8 @@ static NSArray<NSString*>* composedCharacters(NSString* string) {
     // If it still held sent text (holding backspace deletes a whole word at once),
     // delete that text on the host instead.
     if (inputText.length == 0) {
-        NSUInteger backspaces = MAX(composedCharacters(sentKeyboardText).count, (NSUInteger)1);
+        NSUInteger backspaces = MAX([self hostBackspacesForSentCharacters:composedCharacters(sentKeyboardText) from:0], (NSUInteger)1);
+        hostComposingHangul = NO;
         dispatch_async(keyboardTextQueue, ^{
             for (NSUInteger i = 0; i < backspaces; i++) {
                 LiSendKeyboardEvent(0x08, KEY_ACTION_DOWN, 0);
@@ -2115,6 +2171,25 @@ static NSArray<NSString*>* composedCharacters(NSString* string) {
 
     // Strip our sentinel
     NSString* currentText = [inputText hasPrefix:KeyboardInputSentinel] ? [inputText substringFromIndex:KeyboardInputSentinel.length] : inputText;
+    NSString* fullText = currentText;
+
+    // Hold back the Hangul syllable that may still change until typing pauses, so typing
+    // goes out as finished syllables instead of Backspace + rewrite on every key.
+    // iOS's Korean keyboard often composes without marked text, so also hold the last
+    // character when it's Hangul.
+    if (!flushingMarkedHangul && !viaHostIME) {
+        if (markedIsHangul) {
+            [self performSelector:@selector(flushMarkedHangul) withObject:nil afterDelay:HangulFlushDelay];
+        } else if (markedTextRange == nil && currentText.length > 0) {
+            NSRange last = [currentText rangeOfComposedCharacterSequenceAtIndex:currentText.length - 1];
+            // Pure deletions of already-sent text go out right away instead
+            BOOL deletingSent = sentKeyboardText.length > last.location && [sentKeyboardText hasPrefix:currentText];
+            if (!deletingSent && isHangul([currentText substringWithRange:last])) {
+                currentText = [currentText substringToIndex:last.location];
+                [self performSelector:@selector(flushMarkedHangul) withObject:nil afterDelay:HangulFlushDelay];
+            }
+        }
+    }
 
     // Some IMEs (like Korean) compose by replacing the characters they just typed
     // (ㅎ -> 하 -> 한), so we can't just send what was appended. Instead, find what
@@ -2131,15 +2206,51 @@ static NSArray<NSString*>* composedCharacters(NSString* string) {
 
     NSUInteger backspaces = sentCharacters.count - commonLength;
     NSString* addedText = [[currentCharacters subarrayWithRange:NSMakeRange(commonLength, currentCharacters.count - commonLength)] componentsJoinedByString:@""];
+    NSString* hangulKeys = @"";
+
+    if (viaHostIME) {
+        // Split the new text into a leading Hangul run (sent as keys) and the rest
+        NSUInteger runEnd = commonLength;
+        while (runEnd < currentCharacters.count && hangulKeyString(currentCharacters[runEnd]) != nil) {
+            runEnd++;
+        }
+        NSString* newKeys = hangulKeyString([[currentCharacters subarrayWithRange:NSMakeRange(commonLength, runEnd - commonLength)] componentsJoinedByString:@""]);
+        NSString* rest = [[currentCharacters subarrayWithRange:NSMakeRange(runEnd, currentCharacters.count - runEnd)] componentsJoinedByString:@""];
+        // Keys the host IME already has for the syllable being replaced
+        NSString* oldKeys = backspaces == 0 ? @"" : (backspaces == 1 && hostComposingHangul ? hangulKeyString(sentCharacters.lastObject) : nil);
+
+        // (NSString's hasPrefix: is NO for an empty prefix, so check that case first)
+        if (oldKeys != nil && (oldKeys.length == 0 || [newKeys hasPrefix:oldKeys])) {
+            // Typing on: ㅎ -> 하 -> 한 -> 하나 only needs the next key
+            backspaces = 0;
+            hangulKeys = [newKeys substringFromIndex:oldKeys.length];
+            addedText = rest;
+        } else if (oldKeys != nil && backspaces == 1 && rest.length == 0 &&
+                   oldKeys.length == newKeys.length + 1 && (newKeys.length == 0 || [oldKeys hasPrefix:newKeys])) {
+            // Backspace inside the syllable being composed: the host IME removes one jamo too
+            hangulKeys = @"";
+            addedText = @"";
+        } else {
+            backspaces = [self hostBackspacesForSentCharacters:sentCharacters from:commonLength];
+            hangulKeys = newKeys;
+            addedText = rest;
+        }
+        if (backspaces > 0 || hangulKeys.length > 0 || addedText.length > 0) {
+            hostComposingHangul = addedText.length == 0 && (hangulKeys.length > 0 || (hostComposingHangul && newKeys.length > 0));
+        }
+    }
     sentKeyboardText = currentText;
 
     BOOL lettersAsText = ![self toolbarHasLockedKeys];
-    if (backspaces > 0 || addedText.length > 0) {
+    if (backspaces > 0 || hangulKeys.length > 0 || addedText.length > 0) {
         dispatch_async(keyboardTextQueue, ^{
             for (NSUInteger i = 0; i < backspaces; i++) {
                 LiSendKeyboardEvent(0x08, KEY_ACTION_DOWN, 0);
-                usleep(50 * 1000);
+                usleep(15 * 1000);  // short press: the host shows the deleted syllable for less time
                 LiSendKeyboardEvent(0x08, KEY_ACTION_UP, 0);
+            }
+            for (NSUInteger i = 0; i < hangulKeys.length; i++) {
+                [self sendLowLevelEventNow:[KeyboardSupport translateKeyEvent:[hangulKeys characterAtIndex:i] withModifierFlags:0]];
             }
             [self sendKeyboardText:addedText lettersAsText:lettersAsText];
         });
@@ -2148,7 +2259,7 @@ static NSArray<NSString*>* composedCharacters(NSString* string) {
     // Reset the text field once the user reaches a point where no IME could still
     // be composing (whitespace or punctuation), or if the text gets long.
     // Resetting after every character breaks IMEs that rewrite previous characters.
-    if (markedTextRange == nil && currentText.length > 0) {
+    if (markedTextRange == nil && fullText.length > 0 && [fullText isEqualToString:currentText]) {
         unichar lastCharacter = [currentText characterAtIndex:currentText.length - 1];
         if (currentText.length >= 256 ||
             [[NSCharacterSet whitespaceAndNewlineCharacterSet] characterIsMember:lastCharacter] ||
